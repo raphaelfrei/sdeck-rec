@@ -26,9 +26,7 @@ This tool automates the process, allowing you to:
 
 ## ▶️ How to Use
 
-1. **Copy your Steam Deck recordings** to your computer. These are usually found under:
-````/home/deck/Videos/SteamDeck/````
-
+1. **Copy your Steam Deck recordings** to your computer.
 2. **Open the application.**
 3. Click **"Root Directory"** to select the folder containing the `.mpd` files.
 4. Click **"Output Folder"** to select the destination folder for the `.mp4` files.
