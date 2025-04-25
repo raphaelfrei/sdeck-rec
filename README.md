@@ -39,5 +39,6 @@ This tool automates the process, allowing you to:
 
 ## 🧩 Requirements
 
-- Windows 10 or higher
+- Windows 10 or higher  
+- [.NET 8.0 Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)  
 - FFmpeg (included in the project under `libs/ffmpeg.exe`)
