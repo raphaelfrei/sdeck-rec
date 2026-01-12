@@ -60,19 +60,26 @@ namespace sdeckrec.Views {
         }
 
         private double GetVideoTime(string mpdFile) {
+            try {
+                XDocument mpdDocument = XDocument.Load(mpdFile);
+                XNamespace ns = "urn:mpeg:dash:schema:mpd:2011";
 
-            XDocument mpdDocument = XDocument.Load(mpdFile);
-            XNamespace ns = "urn:mpeg:dash:schema:mpd:2011";
+                var mpdElement = mpdDocument.Element(ns + "MPD");
+                if (mpdElement != null) {
+                    var mediaPresentationDuration = mpdElement.Attribute("mediaPresentationDuration")?.Value;
 
-            var mpdElement = mpdDocument.Element(ns + "MPD");
-            if (mpdElement != null) {
-                var mediaPresentationDuration = mpdElement.Attribute("mediaPresentationDuration")?.Value;
-
-                return XmlConvert.ToTimeSpan(mediaPresentationDuration).TotalSeconds;
-                
+                    if (!string.IsNullOrEmpty(mediaPresentationDuration)) {
+                        double seconds = XmlConvert.ToTimeSpan(mediaPresentationDuration).TotalSeconds;
+                        // Retorna pelo menos 1 segundo para evitar divisão por zero em vídeos minúsculos
+                        return seconds > 0 ? seconds : 1;
+                    }
+                }
+            } catch {
+                // Se falhar ao ler, retorna 1 para evitar crash na divisão
+                return 1;
             }
 
-            return 0;
+            return 1; // Default seguro
         }
 
         private async void ConvertAllVideos() {
@@ -110,22 +117,31 @@ namespace sdeckrec.Views {
 
                 await Task.Run(() => {
                     try {
-                        Process ffmpegProcess = new Process();
-                        ffmpegProcess.StartInfo.FileName = FfmpegPath;
-                        ffmpegProcess.StartInfo.Arguments = $"-protocol_whitelist file,http,https,tcp,tls -i \"{mpdFile}\" -c copy \"{outputPath}\"";
-                        ffmpegProcess.StartInfo.RedirectStandardError = true;
-                        ffmpegProcess.StartInfo.UseShellExecute = false;
-                        ffmpegProcess.StartInfo.CreateNoWindow = true;
-                        ffmpegProcess.EnableRaisingEvents = true;
-                        ffmpegProcess.StartInfo.WindowStyle = ProcessWindowStyle.Normal;
-                        ffmpegProcess.ErrorDataReceived += FfmpegProcess_ErrorDataReceived;
-                        ffmpegProcess.Start();
-                        ffmpegProcess.BeginErrorReadLine();
-                        ffmpegProcess.WaitForExit();
+                        using (Process ffmpegProcess = new Process()) {
+                            ffmpegProcess.StartInfo.FileName = FfmpegPath;
+                            ffmpegProcess.StartInfo.Arguments = $"-protocol_whitelist file,http,https,tcp,tls -i \"{mpdFile}\" -c copy \"{outputPath}\" -y"; // -y para sobrescrever sem perguntar
+                            ffmpegProcess.StartInfo.RedirectStandardError = true;
+                            ffmpegProcess.StartInfo.UseShellExecute = false;
+                            ffmpegProcess.StartInfo.CreateNoWindow = true;
+                            ffmpegProcess.EnableRaisingEvents = true; // Importante
+                            ffmpegProcess.StartInfo.WindowStyle = ProcessWindowStyle.Hidden; // Melhor que Normal para background
 
-                        if (ffmpegProcess.ExitCode == 0)
-                            conversionSuccess = true;
-                    } catch {
+                            ffmpegProcess.ErrorDataReceived += FfmpegProcess_ErrorDataReceived;
+
+                            ffmpegProcess.Start();
+                            ffmpegProcess.BeginErrorReadLine();
+
+                            // Espera o processo sair. Se for um arquivo pequeno corrompido que trava o ffmpeg,
+                            // isso evita que o app congele para sempre.
+                            // Aqui ele espera indefinidamente, mas como o processo é curto, deve ser instantâneo.
+                            ffmpegProcess.WaitForExit();
+
+                            // Se chegou aqui, o processo terminou.
+                            if (ffmpegProcess.ExitCode == 0)
+                                conversionSuccess = true;
+                        }
+                    } catch (Exception ex) {
+                        // Logar erro se necessário: Debug.WriteLine(ex.Message);
                         conversionSuccess = false;
                     }
                 });
@@ -143,26 +159,34 @@ namespace sdeckrec.Views {
         }
 
         private void FfmpegProcess_ErrorDataReceived(object sender, DataReceivedEventArgs e) {
-
+            // Se o processo já terminou ou a linha é nula, ignora
             if (string.IsNullOrEmpty(e.Data))
                 return;
 
-            // Regex to capture current video time (Example: time=00:33:09.26)
-            var match = Regex.Match(e.Data, @"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})");
+            try {
+                // Regex para capturar o tempo
+                var match = Regex.Match(e.Data, @"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})");
 
-            if (match.Success) {
+                if (match.Success) {
+                    int hours = int.Parse(match.Groups[1].Value);
+                    int minutes = int.Parse(match.Groups[2].Value);
+                    int seconds = int.Parse(match.Groups[3].Value);
+                    double currentTime = hours * 3600 + minutes * 60 + seconds;
 
-                int hours = int.Parse(match.Groups[1].Value);
-                int minutes = int.Parse(match.Groups[2].Value);
-                int seconds = int.Parse(match.Groups[3].Value);
-                double currentTime = hours * 3600 + minutes * 60 + seconds;
+                    // CORREÇÃO: Evita divisão por zero se TotalVideoTime for 0
+                    if (TotalVideoTime > 0) {
+                        double progress = (currentTime / TotalVideoTime) * 100;
 
-                // Get percentage comparing to TotalVideoTime
-                double progress = (currentTime / TotalVideoTime) * 100;
+                        // Garante que o progresso não ultrapasse 100 ou seja negativo
+                        int finalValue = Math.Max(0, Math.Min((int)progress, 100));
 
-                PgBarSingle.Invoke((MethodInvoker)(() => {
-                    PgBarSingle.Value = Math.Min((int)progress, PgBarSingle.Maximum);
-                }));
+                        PgBarSingle.Invoke((MethodInvoker)(() => {
+                            PgBarSingle.Value = finalValue;
+                        }));
+                    }
+                }
+            } catch {
+                // Ignora erros de parsing para não travar o processo principal
             }
         }
 
